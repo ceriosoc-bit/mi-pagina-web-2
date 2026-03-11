@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Holograma de Mano</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000;
+            overflow: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #00f2ff;
+        }
+
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        #video-container {
+            display: none; /* Oculto, solo para procesamiento */
+        }
+
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            pointer-events: none;
+            text-shadow: 0 0 10px #00f2ff;
+        }
+
+        .status {
+            font-size: 1.2rem;
+            margin-bottom: 5px;
+        }
+
+        .hint {
+            font-size: 0.9rem;
+            opacity: 0.7;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(0, 242, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #00f2ff;
+            animation: spin 1s ease-in-out infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="loading">
+            <div class="spinner"></div>
+            <p>Iniciando sistema holográfico...</p>
+        </div>
+
+        <div id="ui">
+            <div class="status" id="status-text">Buscando mano...</div>
+            <div class="hint">Coloca tu mano frente a la cámara</div>
+        </div>
+
+        <canvas id="canvas"></canvas>
+        
+        <div id="video-container">
+            <video id="webcam" autoplay playsinline></video>
+        </div>
+    </div>
+
+    <!-- MediaPipe Hands SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
+    <script>
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const statusText = document.getElementById('status-text');
+        const loadingElement = document.getElementById('loading');
+
+        // Ajustar canvas al tamaño de la ventana
+        function resize() {
+            canvasElement.width = window.innerWidth;
+            canvasElement.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Sistema de partículas
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x;
+                this.y = y;
+                this.size = Math.random() * 3 + 1;
+                this.baseX = x;
+                this.baseY = y;
+                this.density = (Math.random() * 30) + 1;
+                this.color = color;
+                this.opacity = 1;
+            }
+
+            draw() {
+                canvasCtx.fillStyle = `rgba(0, 242, 255, ${this.opacity})`;
+                canvasCtx.shadowBlur = 10;
+                canvasCtx.shadowColor = '#00f2ff';
+                canvasCtx.beginPath();
+                canvasCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                canvasCtx.closePath();
+                canvasCtx.fill();
+                canvasCtx.shadowBlur = 0;
+            }
+
+            update(targetX, targetY) {
+                let dx = targetX - this.x;
+                let dy = targetY - this.y;
+                let distance = Math.sqrt(dx * dx + dy * dy);
+                let forceDirectionX = dx / distance;
+                let forceDirectionY = dy / distance;
+                
+                // Movimiento suave hacia el punto
+                let speed = distance / this.density;
+                this.x += forceDirectionX * speed;
+                this.y += forceDirectionY * speed;
+                
+                // Oscilación tipo holograma
+                this.opacity = 0.5 + Math.sin(Date.now() * 0.01) * 0.3;
+            }
+        }
+
+        let particles = [];
+        const MAX_PARTICLES = 200; // Total de partículas flotantes
+        
+        // Inicializar partículas
+        for (let i = 0; i < MAX_PARTICLES; i++) {
+            particles.push({
+                x: Math.random() * canvasElement.width,
+                y: Math.random() * canvasElement.height,
+                vx: (Math.random() - 0.5) * 2,
+                vy: (Math.random() - 0.5) * 2,
+                size: Math.random() * 2 + 1,
+                alpha: Math.random()
+            });
+        }
+
+        function onResults(results) {
+            loadingElement.style.display = 'none';
+            
+            // Efecto de rastro (fade)
+            canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+            canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
+
+            let handPoints = [];
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                statusText.innerText = "Mano detectada - Sistema activo";
+                statusText.style.color = "#00f2ff";
+
+                for (const landmarks of results.multiHandLandmarks) {
+                    // Recolectar puntos de la mano
+                    landmarks.forEach(point => {
+                        handPoints.push({
+                            x: point.x * canvasElement.width,
+                            y: point.y * canvasElement.height
+                        });
+                    });
+
+                    // Dibujar conexiones tipo rejilla holográfica
+                    canvasCtx.strokeStyle = 'rgba(0, 242, 255, 0.3)';
+                    canvasCtx.lineWidth = 1;
+                    canvasCtx.beginPath();
+                    
+                    const connections = [
+                        [0, 1, 2, 3, 4], [0, 5, 6, 7, 8], [0, 9, 10, 11, 12],
+                        [0, 13, 14, 15, 16], [0, 17, 18, 19, 20], [5, 9, 13, 17], [0, 5], [0, 17]
+                    ];
+
+                    connections.forEach(path => {
+                        for (let i = 0; i < path.length - 1; i++) {
+                            const p1 = landmarks[path[i]];
+                            const p2 = landmarks[path[i+1]];
+                            canvasCtx.moveTo(p1.x * canvasElement.width, p1.y * canvasElement.height);
+                            canvasCtx.lineTo(p2.x * canvasElement.width, p2.y * canvasElement.height);
+                        }
+                    });
+                    canvasCtx.stroke();
+
+                    // Brillo en landmarks
+                    landmarks.forEach(point => {
+                        const x = point.x * canvasElement.width;
+                        const y = point.y * canvasElement.height;
+                        
+                        canvasCtx.fillStyle = '#00f2ff';
+                        canvasCtx.beginPath();
+                        canvasCtx.arc(x, y, 2, 0, Math.PI * 2);
+                        canvasCtx.fill();
+                        
+                        // Resplandor
+                        const g = canvasCtx.createRadialGradient(x, y, 0, x, y, 8);
+                        g.addColorStop(0, 'rgba(0, 242, 255, 0.4)');
+                        g.addColorStop(1, 'rgba(0, 242, 255, 0)');
+                        canvasCtx.fillStyle = g;
+                        canvasCtx.beginPath();
+                        canvasCtx.arc(x, y, 8, 0, Math.PI * 2);
+                        canvasCtx.fill();
+                    });
+                }
+            } else {
+                statusText.innerText = "Buscando mano...";
+                statusText.style.color = "#ff3300";
+            }
+
+            // Actualizar y dibujar partículas que siguen/toman forma
+            particles.forEach((p, i) => {
+                if (handPoints.length > 0) {
+                    // Cada partícula sigue a un punto específico de la mano (o se distribuyen)
+                    const target = handPoints[i % handPoints.length];
+                    
+                    // Añadir un pequeño offset aleatorio para que parezca una nube alrededor del punto
+                    const offsetX = (Math.random() - 0.5) * 20;
+                    const offsetY = (Math.random() - 0.5) * 20;
+                    
+                    const dx = (target.x + offsetX) - p.x;
+                    const dy = (target.y + offsetY) - p.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    // Fuerza de atracción tipo resorte
+                    p.vx += dx * 0.05;
+                    p.vy += dy * 0.05;
+                    
+                    // Fricción para evitar oscilaciones infinitas
+                    p.vx *= 0.8;
+                    p.vy *= 0.8;
+                } else {
+                    // Movimiento errático cuando no hay mano
+                    p.vx += (Math.random() - 0.5) * 0.2;
+                    p.vy += (Math.random() - 0.5) * 0.2;
+                    p.vx *= 0.98;
+                    p.vy *= 0.98;
+                }
+
+                p.x += p.vx;
+                p.y += p.vy;
+
+                // Límites de pantalla
+                if (p.x < 0) p.x = canvasElement.width;
+                if (p.x > canvasElement.width) p.x = 0;
+                if (p.y < 0) p.y = canvasElement.height;
+                if (p.y > canvasElement.height) p.y = 0;
+
+                // Dibujar partícula holográfica
+                canvasCtx.fillStyle = `rgba(0, 242, 255, ${0.3 + Math.random() * 0.5})`;
+                canvasCtx.beginPath();
+                canvasCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                canvasCtx.fill();
+
+                // Conectar partículas cercanas para efecto de red
+                if (i % 5 === 0) {
+                    particles.slice(i+1, i+10).forEach(p2 => {
+                        const d = Math.sqrt((p.x-p2.x)**2 + (p.y-p2.y)**2);
+                        if (d < 50) {
+                            canvasCtx.strokeStyle = `rgba(0, 242, 255, ${1 - d/50})`;
+                            canvasCtx.lineWidth = 0.5;
+                            canvasCtx.beginPath();
+                            canvasCtx.moveTo(p.x, p.y);
+                            canvasCtx.lineTo(p2.x, p2.y);
+                            canvasCtx.stroke();
+                        }
+                    });
+                }
+            });
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }
+        });
+
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 1280,
+            height: 720
+        });
+        camera.start();
+    </script>
+</body>
+</html>
